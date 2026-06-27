@@ -1,42 +1,97 @@
-// src/memory.js - Kumbukumbu ya Mazungumzo (Phase 1 - RAM tu)
-// Phase 2 itabadilisha hii na Koyeb PostgreSQL
+// src/memory.js - Memory ya Kudumu (Phase 2 - PostgreSQL)
+const { pool } = require('./db');
 
-// Hifadhi ya mazungumzo kwa session ID
-const sessions = new Map();
-
-// Historia ya max messages 20 per session (token optimization)
 const MAX_HISTORY = 20;
 
 /**
- * Pata historia ya session
+ * Pata historia ya session kutoka database
  */
-function getHistory(sessionId) {
-    if (!sessions.has(sessionId)) {
-        sessions.set(sessionId, []);
-    }
-    return sessions.get(sessionId);
-}
-
-/**
- * Ongeza message kwenye historia
- */
-function addToHistory(sessionId, role, content) {
-    const history = getHistory(sessionId);
-    history.push({ role, content });
-
-    // Zuia historia isikue kubwa sana — token optimization
-    if (history.length > MAX_HISTORY) {
-        // Futa messages za zamani lakini acha 2 za kwanza (context ya mwanzo)
-        history.splice(2, history.length - MAX_HISTORY);
+async function getHistory(sessionId) {
+    try {
+        const result = await pool.query(
+            `SELECT role, content FROM conversations
+             WHERE session_id = $1
+             ORDER BY created_at ASC
+             LIMIT $2`,
+            [sessionId, MAX_HISTORY]
+        );
+        return result.rows.map(row => ({
+            role: row.role,
+            content: row.content
+        }));
+    } catch (err) {
+        console.error('getHistory error:', err.message);
+        return [];
     }
 }
 
 /**
- * Futa session (reset mazungumzo)
+ * Hifadhi message mpya kwenye database
  */
-function clearSession(sessionId) {
-    sessions.delete(sessionId);
+async function addToHistory(sessionId, role, content) {
+    try {
+        await pool.query(
+            `INSERT INTO conversations (session_id, role, content)
+             VALUES ($1, $2, $3)`,
+            [sessionId, role, content]
+        );
+    } catch (err) {
+        console.error('addToHistory error:', err.message);
+    }
 }
 
-module.exports = { getHistory, addToHistory, clearSession };
+/**
+ * Futa mazungumzo ya session — anza upya
+ */
+async function clearSession(sessionId) {
+    try {
+        await pool.query(
+            `DELETE FROM conversations WHERE session_id = $1`,
+            [sessionId]
+        );
+    } catch (err) {
+        console.error('clearSession error:', err.message);
+    }
+}
+
+/**
+ * Hifadhi fact muhimu — Professor ataikumbuka milele
+ * Mfano: saveFact("jina_la_cj", "CJ ni developer wa East Africa")
+ */
+async function saveFact(key, value) {
+    try {
+        await pool.query(
+            `INSERT INTO memory (key, value, updated_at)
+             VALUES ($1, $2, NOW())
+             ON CONFLICT (key) DO UPDATE
+             SET value = $2, updated_at = NOW()`,
+            [key, value]
+        );
+    } catch (err) {
+        console.error('saveFact error:', err.message);
+    }
+}
+
+/**
+ * Pata facts zote anazozijua Professor
+ */
+async function getAllFacts() {
+    try {
+        const result = await pool.query(
+            `SELECT key, value FROM memory ORDER BY updated_at DESC`
+        );
+        return result.rows;
+    } catch (err) {
+        console.error('getAllFacts error:', err.message);
+        return [];
+    }
+}
+
+module.exports = {
+    getHistory,
+    addToHistory,
+    clearSession,
+    saveFact,
+    getAllFacts
+};
 

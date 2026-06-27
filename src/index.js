@@ -1,96 +1,80 @@
-// src/index.js - Lango Kuu la Professor Agent (Phase 1)
+// src/index.js - Lango Kuu la Professor Agent (Phase 2)
 require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
 const { think } = require('./brain');
-const { getHistory, addToHistory, clearSession } = require('./memory');
+const { setupDatabase } = require('./db');
+const { getHistory, addToHistory, clearSession, getAllFacts } = require('./memory');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-/**
- * Health check - Koyeb inahitaji hii kujua server ipo
- */
+// Health check
 app.get('/health', (req, res) => {
     res.json({
         status: 'alive',
         agent: 'Professor',
-        version: '1.0.0',
+        version: '2.0.0',
         timestamp: new Date().toISOString()
     });
 });
 
-/**
- * Endpoint kuu — Firebase itatuma messages hapa
- * POST /chat
- * Body: { message: "habari", sessionId: "cj-main" }
- */
+// Endpoint kuu — Firebase itatuma messages hapa
 app.post('/chat', async (req, res) => {
     const { message, sessionId = 'default' } = req.body;
 
-    // Validate input
     if (!message || message.trim() === '') {
-        return res.status(400).json({
-            success: false,
-            error: 'Message haikuja'
-        });
+        return res.status(400).json({ success: false, error: 'Message haikuja' });
     }
 
     console.log(`[${new Date().toISOString()}] CJ: ${message}`);
 
-    // Pata historia ya session hii
-    const history = getHistory(sessionId);
+    // Pata historia + facts kutoka database
+    const history = await getHistory(sessionId);
+    const facts = await getAllFacts();
 
-    // Professor afikirie
-    const result = await think(history, message);
+    // Ongeza facts kwenye message kama context
+    const contextMessage = facts.length > 0
+        ? `[Ninachokujua kukuhusu: ${facts.map(f => f.value).join('. ')}]\n\n${message}`
+        : message;
+
+    const result = await think(history, contextMessage);
 
     if (result.success) {
-        // Hifadhi mazungumzo kwenye memory
-        addToHistory(sessionId, 'user', message);
-        addToHistory(sessionId, 'assistant', result.reply);
+        await addToHistory(sessionId, 'user', message);
+        await addToHistory(sessionId, 'assistant', result.reply);
 
         console.log(`[${new Date().toISOString()}] Professor: ${result.reply.substring(0, 100)}...`);
 
-        res.json({
-            success: true,
-            reply: result.reply,
-            sessionId
-        });
+        res.json({ success: true, reply: result.reply, sessionId });
     } else {
-        res.status(500).json({
-            success: false,
-            reply: result.reply,
-            error: 'Brain error'
-        });
+        res.status(500).json({ success: false, reply: result.reply });
     }
 });
 
-/**
- * Reset mazungumzo — anza upya
- * POST /reset
- */
-app.post('/reset', (req, res) => {
+// Reset mazungumzo
+app.post('/reset', async (req, res) => {
     const { sessionId = 'default' } = req.body;
-    clearSession(sessionId);
-    res.json({
-        success: true,
-        message: 'Mazungumzo yamefutwa. Anza upya!'
-    });
+    await clearSession(sessionId);
+    res.json({ success: true, message: 'Mazungumzo yamefutwa!' });
 });
 
-// Anza server
-app.listen(PORT, () => {
-    console.log(`
+// Anza server + setup database
+async function start() {
+    await setupDatabase();
+    app.listen(PORT, () => {
+        console.log(`
 ╔══════════════════════════════════════╗
-║   PROFESSOR AGENT - Phase 1 Online  ║
-║   Port: ${PORT}                         ║
-║   Model: ${process.env.GROQ_MODEL || 'openai/gpt-oss-120b'}  ║
+║  PROFESSOR AGENT v2.0 - Memory ON   ║
+║  Port: ${PORT}                          ║
 ╚══════════════════════════════════════╝
-    `);
-});
+        `);
+    });
+}
+
+start();
 
